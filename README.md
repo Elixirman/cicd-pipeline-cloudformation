@@ -4,6 +4,8 @@ A GitHub Actions pipeline that automatically validates and deploys a CloudFormat
 stack to dev, staging, or prod — authenticating to AWS via OIDC with no long-lived
 credentials stored anywhere.
 
+**Live demo:** https://d1i4r3gwiov7eb.cloudfront.net/
+
 ## Architecture
 
 git push to main --> GitHub Actions triggered
@@ -19,6 +21,7 @@ Sync site files to S3
 dev / staging / prod (isolated per-environment resources)
 
 
+
 ## Why OIDC instead of access keys
 
 Traditional CI/CD setups store a permanent AWS access key + secret as a GitHub Secret.
@@ -26,7 +29,7 @@ If that secret ever leaks, it's valid indefinitely until manually rotated. OIDC 
 lets GitHub Actions request short-lived, auto-expiring credentials at runtime by proving
 its identity via a signed token — no static keys exist at all.
 
-## One-time AWS setup (already done for this repo)
+## One-time AWS setup
 
 ```bash
 # 1. Create the OIDC identity provider (account-wide, one-time)
@@ -77,11 +80,42 @@ Reuses the Project 1 static site template (S3 + CloudFront + OAC), with an added
 `EnvironmentType` parameter so dev/staging/prod each get fully isolated, non-colliding
 resources from the same template.
 
+## A real debugging note: the OIDC `sub` claim gotcha
+
+While building this, `AssumeRoleWithWebIdentity` failed repeatedly with a generic
+"Not authorized" error, even with a correctly-configured trust policy and permissions.
+The root cause: this GitHub account's OIDC token `sub` claim is formatted as
+
+repo:Elixirman@80814786/cicd-pipeline-cloudformation@1352265240:ref:refs/heads/main
+
+
+rather than the commonly-documented `repo:OWNER/REPO:ref:refs/heads/BRANCH` format —
+note the `@<numeric-id>` segment inserted after the username. A trust policy condition
+of `repo:Elixirman/*` therefore never matched. The fix was changing the `StringLike`
+condition to `repo:Elixirman@*` to match the actual claim format.
+
+**Lesson:** never assume a documented OIDC claim format is universal — when
+`AssumeRoleWithWebIdentity` fails with a correctly-scoped policy, add a temporary
+debug step to decode and print the actual JWT claims before assuming the trust
+policy logic itself is wrong.
+
+## Tear down
+
+```bash
+aws cloudformation delete-stack --stack-name project4-site-dev
+aws cloudformation delete-stack --stack-name project4-site-staging
+aws cloudformation delete-stack --stack-name project4-site-prod
+aws iam delete-role-policy --role-name github-actions-cfn-deploy --policy-name CfnDeployPermissions
+aws iam delete-role --role-name github-actions-cfn-deploy
+```
+
 ## What this project demonstrates
 
 - CI/CD pipeline design with GitHub Actions
 - OIDC federation as a secretless AWS authentication pattern
 - Multi-environment infrastructure from a single parameterized template
 - Least-privilege IAM scoping for automated deployment roles
+- Real-world debugging of IAM trust policy / OIDC claim mismatches using
+  token introspection rather than guesswork
 - The difference between manual (`create-stack`/`update-stack`) and pipeline-friendly
   (`cloudformation deploy`) CLI commands
