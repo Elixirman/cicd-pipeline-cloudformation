@@ -26,6 +26,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Debug - inspect OIDC token claims
+        run: |
+          TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r '.value')
+          echo "$TOKEN" | cut -d '.' -f2 | base64 -d 2>/dev/null | jq '.sub, .aud, .repository'
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -43,30 +48,21 @@ jobs:
 
       - name: Validate template
         run: |
-          aws cloudformation validate-template \
-            --template-body file://template.yaml
+          aws cloudformation validate-template --template-body file://template.yaml
 
       - name: Deploy stack
         run: |
           aws cloudformation deploy \
             --stack-name project4-site-${{ steps.env.outputs.environment }} \
             --template-file template.yaml \
-            --parameter-overrides \
-              EnvironmentType=${{ steps.env.outputs.environment }} \
-              BucketNamePrefix=ademichaelz-p4-site \
+            --parameter-overrides EnvironmentType=${{ steps.env.outputs.environment }} BucketNamePrefix=ademichaelz-p4-site \
             --no-fail-on-empty-changeset
 
       - name: Sync site files to S3
         run: |
-          BUCKET_NAME=$(aws cloudformation describe-stacks \
-            --stack-name project4-site-${{ steps.env.outputs.environment }} \
-            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" \
-            --output text)
+          BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name project4-site-${{ steps.env.outputs.environment }} --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text)
           aws s3 sync ./site s3://$BUCKET_NAME --delete
 
       - name: Print live URL
         run: |
-          aws cloudformation describe-stacks \
-            --stack-name project4-site-${{ steps.env.outputs.environment }} \
-            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" \
-            --output text
+          aws cloudformation describe-stacks --stack-name project4-site-${{ steps.env.outputs.environment }} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text
