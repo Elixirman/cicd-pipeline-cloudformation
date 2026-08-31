@@ -1,0 +1,6 @@
+trust-policy.json
+deploy-permissions.json
+*.pem
+.env
+credentials
+.DS_Store

@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Project 1 - Static Website Hosting with S3 + CloudFront.
+  Private S3 bucket, publicly served via CloudFront using Origin Access Control (OAC).
+
+Parameters:
+  BucketNamePrefix:
+    Description: 'Prefix for the S3 bucket (must be globally unique across ALL of AWS)'
+    Type: String
+    Default: my-portfolio-site
+  EnvironmentType:
+    Description: 'Deployment environment'
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+
+  SiteBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub '${BucketNamePrefix}-${EnvironmentType}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  SiteOAC:
+    Type: 'AWS::CloudFront::OriginAccessControl'
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${BucketNamePrefix}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        DefaultCacheBehavior:
+          TargetOriginId: SiteS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        Origins:
+          - Id: SiteS3Origin
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /error.html
+
+  SiteBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: 's3:GetObject'
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}'
+
+Outputs:
+  BucketName:
+    Description: 'Name of the S3 bucket holding site files'
+    Value: !Ref SiteBucket
+
+  CloudFrontURL:
+    Description: 'Live public URL for your site'
+    Value: !Sub 'https://${SiteDistribution.DomainName}'
+
+  DistributionId:
+    Description: 'CloudFront distribution ID'
+    Value: !Ref SiteDistribution

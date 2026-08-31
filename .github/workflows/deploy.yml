@@ -1,0 +1,72 @@
+name: Deploy CloudFormation Stack
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://template.yaml
+
+      - name: Deploy stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name project4-site-${{ steps.env.outputs.environment }} \
+            --template-file template.yaml \
+            --parameter-overrides \
+              EnvironmentType=${{ steps.env.outputs.environment }} \
+              BucketNamePrefix=ademichaelz-p4-site \
+            --no-fail-on-empty-changeset
+
+      - name: Sync site files to S3
+        run: |
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name project4-site-${{ steps.env.outputs.environment }} \
+            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" \
+            --output text)
+          aws s3 sync ./site s3://$BUCKET_NAME --delete
+
+      - name: Print live URL
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name project4-site-${{ steps.env.outputs.environment }} \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" \
+            --output text
