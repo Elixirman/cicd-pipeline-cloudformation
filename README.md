@@ -20,7 +20,7 @@ Sync site files to S3
 |
 dev / staging / prod (isolated per-environment resources)
 
-
+![Architecture](CICD.png)
 
 ## Why OIDC instead of access keys
 
